@@ -1,154 +1,89 @@
-# python-lambda-local -f lambda_handler lambda_function.py event.json
 import os
-import json
-import tempfile
 import uuid
-from urllib.request import urlopen, urlretrieve
-import requests
+import messenger_utils
+import vidstab_s3_utils
 import boto3
-from botocore.errorfactory import ClientError
-import matplotlib
-matplotlib.use('Agg')
-import vidstab
 
 s3 = boto3.resource('s3')
-s3_client = boto3.client('s3')
 
+# Bucket to save stabilized videos to. Bucket is public so FB Messenger can access contents.
 bucket_name = 'messengervidstabpublic'
-last_url = None
+# Bucket to log messaging event info to. This is used to prevent same event triggering function multiple times
+log_bucket_name = 'messengervidstaburls'
+
+# Text to send to user if no video received to stabilize
+default_response = "Send me a video and I'll do my best to stabilize it & send it back to you!"
 
 
-def find_item(obj, key):
-    if key in obj:
-        return obj[key]
-    for k, v in obj.items():
-        if isinstance(v,dict):
-            item = find_item(v, key)
-            if item is not None:
-                return item
+def is_lambda_retrigger(messaging_event, log_bucket):
+    """Util to prevent same event triggering Lambda function multiple times
 
-
-def keys_exist(obj, keys):
-    for key in keys:
-        if find_item(obj, key) is None:
-            return False
-    return True
-
-
-def stabilize_to_s3(in_url, out_filename):
-    with tempfile.TemporaryDirectory() as dirpath:
-        # set up filepaths for input/output
-        in_path = '{}/{}.mp4'.format(dirpath, uuid.uuid4())
-        out_path = '{}/{}'.format(dirpath, out_filename)
-        # download received video
-        urlretrieve(in_url, in_path)
-        # init stabilizer
-        stabilizer = vidstab.VidStab()
-        # stabilize and write
-        stabilizer.stabilize(in_path, 
-                             out_path, 
-                             border_size=100, 
-                             output_fourcc='MP4V')
-        # upload to s3 bucket
-        s3.meta.client.upload_file(out_path,
-                                   bucket_name,
-                                   out_filename,
-                                   ExtraArgs={'ACL': 'public-read'})
-
-    return True
-
-def s3_obj_exists(bucket, key):
-    try:
-        s3_client.head_object(Bucket=bucket, Key=key)
-        print('S3 OBJECT EXISTS')
+    :param messaging_event: FB messenger event ( use messenger_utils.extract_messaging_event(event) )
+    :param log_bucket: Bucket to log messaging event info to
+    :return: True if messaging_event is already logged in log_bucket; otherwise False
+    """
+    log_id = str(messaging_event['timestamp']) + '_' + messenger_utils.extract_sender_id(messaging_event)
+    if vidstab_s3_utils.s3_obj_exists('messengervidstaburls', log_id):
         return True
-    except ClientError:
-        print("S3 OBJECT DOESN'T EXIST")
+    else:
+        s3.Object(log_bucket, log_id).put(Body='*')
         return False
-
-def send_message(send_id, msg_txt):
-    params = {"access_token": os.environ['access_token']}
-    headers = {"Content-Type": "application/json"}
-    data = json.dumps({"recipient": {"id": send_id},
-                       "message": {"text": msg_txt}})
-
-    r = requests.post("https://graph.facebook.com/v2.6/me/messages", params=params, headers=headers, data=data)
-
-    if r.status_code != 200:
-        print(r.status_code)
-        print(r.text)
-
-
-def send_attachment(send_id, attach_url):
-    params = {"access_token": os.environ['access_token']}
-    headers = {"Content-Type": "application/json"}
-    data = json.dumps(
-        {"recipient": {
-            "id": send_id
-        },
-            "message": {
-                "attachment": {
-                    "type": "video",
-                    "payload": {
-                        "url": attach_url, "is_reusable": True
-                    }
-                }
-            }
-        })
-    r = requests.post("https://graph.facebook.com/v2.6/me/messages", params=params, headers=headers, data=data)
-    if r.status_code != 200:
-        print(r.status_code)
-        print(r.text)
 
 
 def lambda_handler(event, context):
-    global last_url
-    print(last_url)
-    
+    """Lambda function to receive/stabilize videos received through FB Messenger
+
+    :param event: AWS Lambda event
+    :param context: AWS Lambda context
+    :return: If event is a FB webhook challenge then the received challenge is returned;
+             otherwise a string noting the status of the process is returned
+    """
+
     print('\n\nEVENT:')
     print(event)
-    print('\n\nCONTEXT:')
-    print(context.aws_request_id)
 
-    # handle webhook challenge
-    if keys_exist(event, ["params", "querystring", "hub.verify_token", "hub.challenge"]):
-        v_token = str(find_item(event, 'hub.verify_token'))
-        challenge = int(find_item(event, 'hub.challenge'))
-        if os.environ['verify_token'] == v_token:
-            return challenge
+    # check if event is webhook challenge and handle if True
+    if messenger_utils.is_webhook_challenge(event):
+        print('RECEIVED WEBHOOK CHALLENGE')
+        return messenger_utils.handle_webhook_challenge(event, os.environ['verify_token'])
 
-    # handle messaging events
-    if keys_exist(event, ['body-json', 'entry']):
-        event_entry0 = event['body-json']['entry'][0]
-        if keys_exist(event_entry0, ['messaging']):
-            messaging_event = event_entry0['messaging'][0]
-            sender_id = messaging_event['sender']['id']
-            try:
-                attachment = messaging_event['message']['attachments'][0]
-                if attachment['type'] == 'video':
-                    rcvd_vid_url = attachment['payload']['url']
-                    s3_rcvd_vid_id = str(messaging_event['timestamp']) + '_' + sender_id
-                    
-                    if last_url == rcvd_vid_url or s3_obj_exists('messengervidstaburls', s3_rcvd_vid_id):
-                        print('KILLED RETRY')
-                        return True
-                    else:
-                        s3.Object('messengervidstaburls', s3_rcvd_vid_id).put(Body='*')
-                        last_url = rcvd_vid_url
-                    
-                    out_filename = '{}.mp4'.format(uuid.uuid4())
-                    s3_result_url = 'https://s3.amazonaws.com/{}/{}'.format(bucket_name, out_filename)
-                    
-                    stabilize_to_s3(in_url=rcvd_vid_url, out_filename=out_filename)
-                    print('attach url')
-                    print(s3_result_url)
-                    # send_message(send_id=sender_id, msg_txt=s3_result_url)
-                    send_attachment(send_id=sender_id,  attach_url=s3_result_url)
-                    s3.Object(bucket_name, out_filename).delete()
-                else:
-                    send_message(send_id=sender_id, msg_txt="Send me a video and I'll do my best to stabilize it & send it back to you!")
-            except Exception as e:
-                print(e)
-                send_message(send_id=sender_id, msg_txt="Send me a video and I'll do my best to stabilize it & send it back to you!")
+    # check if event is user messenger event if true:
+    # run video stabilization process or respond with default message(s)
+    if messenger_utils.is_user_message(event):
+        print('RECEIVED MESSAGE')
+        # extract info of note from event
+        messaging_event = messenger_utils.extract_messaging_event(event)
+        if not messaging_event:
+            return 'UNEXPECTED EVENT'
 
-    return True
+        sender_id = messenger_utils.extract_sender_id(messaging_event)
+        rcvd_vid_url = messenger_utils.extract_video_url(messaging_event)
+
+        # respond with default message if no video received
+        if not rcvd_vid_url:
+            messenger_utils.send_message(send_id=sender_id,
+                                         msg_txt=default_response,
+                                         access_token=os.environ['access_token'])
+
+        # stop processing if this is a retry of an already processed/in process event
+        elif is_lambda_retrigger(messaging_event, log_bucket_name):
+            return 'KILLED RETRY'
+
+        # create key to save stabilized video to in S3 Bucket
+        out_filename = '{}.mp4'.format(uuid.uuid4())
+        s3_result_url = 'https://s3.amazonaws.com/{}/{}'.format(bucket_name, out_filename)
+
+        # perform vidstab process and save to S3 bucket
+        vidstab_s3_utils.stabilize_to_s3(in_url=rcvd_vid_url,
+                                         out_filename=out_filename,
+                                         bucket=bucket_name)
+
+        # send stabilized video back to user
+        messenger_utils.send_video_attachment(send_id=sender_id,
+                                              attach_url=s3_result_url,
+                                              access_token=os.environ['access_token'])
+
+        # delete stabilized video from S3 Bucket
+        s3.Object(bucket_name, out_filename).delete()
+
+    return 'EXECUTED WITHOUT ERROR'
