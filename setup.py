@@ -9,10 +9,8 @@ setup(name='vidstabFB',
       packages=['vidstabFB'],
       license='MIT',
       install_requires=[
+          'urllib3',
           'vidstab',
-          'matplotlib',
           'requests',
-          'boto3',
-          'botocore',
       ]
       )
