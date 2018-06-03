@@ -9,7 +9,6 @@ setup(name='vidstabFB',
       packages=['vidstabFB'],
       license='MIT',
       install_requires=[
-          'urllib3',
           'vidstab',
           'requests',
       ]

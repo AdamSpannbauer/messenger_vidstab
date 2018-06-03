@@ -1,3 +1,2 @@
-urllib3==1.22
 vidstab>=0.1.1
 requests==2.18.4
