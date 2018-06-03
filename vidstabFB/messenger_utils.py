@@ -2,10 +2,8 @@
 Utility functions for working with FB Messenger (sending/receiving messages/challenges)
 """
 
-
-import os
 import json
-import dict_utils
+from .dict_utils import keys_exist, find_item
 import requests
 
 
@@ -16,7 +14,7 @@ def is_webhook_challenge(event):
     :return: True if event is a FB Messenger webhook challenge; otherwise False
     """
     challenge_keys = ["params", "querystring", "hub.verify_token", "hub.challenge"]
-    return dict_utils.keys_exist(event, challenge_keys)
+    return keys_exist(event, challenge_keys)
 
 
 def handle_webhook_challenge(event, verify_token):
@@ -26,8 +24,8 @@ def handle_webhook_challenge(event, verify_token):
     :param verify_token: The token used to verify challenges for the particular FB Messenger app
     :return: The challenge token received in the event
     """
-    v_token = str(dict_utils.find_item(event, 'hub.verify_token'))
-    challenge = int(dict_utils.find_item(event, 'hub.challenge'))
+    v_token = str(find_item(event, 'hub.verify_token'))
+    challenge = int(find_item(event, 'hub.challenge'))
     if verify_token == v_token:
         return challenge
 
@@ -39,7 +37,7 @@ def is_user_message(event):
     :return: True if event is a FB Messenger message; otherwise False
     """
     message_keys = ['body-json', 'entry']
-    return dict_utils.keys_exist(event, message_keys)
+    return keys_exist(event, message_keys)
 
 
 def extract_messaging_event(event):

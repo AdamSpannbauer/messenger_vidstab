@@ -1,7 +1,7 @@
 import os
 import uuid
-import messenger_utils
-import vidstab_s3_utils
+import vidstabFB.messenger_utils as messenger_utils
+import vidstabFB.vidstab_s3_utils as vidstab_s3_utils
 import boto3
 
 s3 = boto3.resource('s3')

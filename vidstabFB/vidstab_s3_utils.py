@@ -2,7 +2,6 @@
 Utility functions for working with AWS S3 buckets and stabilizing video with vidstab
 """
 
-
 import tempfile
 import uuid
 from urllib.request import urlretrieve
