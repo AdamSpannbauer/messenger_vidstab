@@ -55,7 +55,7 @@ def stabilize_to_s3(in_url, out_filename, bucket, **kwargs):
         # stabilize and write
         stabilizer.stabilize(in_path,
                              out_path,
-                             kwargs)
+                             **kwargs)
         # upload to s3 bucket
         s3.meta.client.upload_file(out_path,
                                    bucket,
