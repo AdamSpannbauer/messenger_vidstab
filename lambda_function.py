@@ -76,7 +76,10 @@ def lambda_handler(event, context):
         # perform vidstab process and save to S3 bucket
         vidstab_s3_utils.stabilize_to_s3(in_url=rcvd_vid_url,
                                          out_filename=out_filename,
-                                         bucket=bucket_name)
+                                         bucket=bucket_name,
+                                         border_type='reflect',
+                                         border_size=-5,
+                                         output_fourcc='MP4V')
 
         # send stabilized video back to user
         messenger_utils.send_video_attachment(send_id=sender_id,

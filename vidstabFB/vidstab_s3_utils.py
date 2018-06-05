@@ -35,12 +35,13 @@ def s3_obj_exists(bucket, key, verbose=True):
         return False
 
 
-def stabilize_to_s3(in_url, out_filename, bucket):
+def stabilize_to_s3(in_url, out_filename, bucket, **kwargs):
     """Wrapper of generic vidstab process that saves to S3 Bucket
 
     :param in_url: URL path to raw video to be stabilized
     :param out_filename: Filename for stabilized output (will be used as key in S3 Bucket output)
     :param bucket: S3 Bucket to save output to (out_filename will be used as key)
+    :param kwargs: keyword arguments to be passed to vidstab.VidStab.stabilize method
     :return: Returns True if no exceptions occur
     """
     with tempfile.TemporaryDirectory() as dirpath:
@@ -54,8 +55,7 @@ def stabilize_to_s3(in_url, out_filename, bucket):
         # stabilize and write
         stabilizer.stabilize(in_path,
                              out_path,
-                             border_size=100,
-                             output_fourcc='MP4V')
+                             kwargs)
         # upload to s3 bucket
         s3.meta.client.upload_file(out_path,
                                    bucket,
